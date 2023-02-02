@@ -3,20 +3,25 @@
 # Declare variables to be passed into your templates.
 
 image:
-  repository: k8s.gcr.io/external-dns/external-dns
+  repository: registry.k8s.io/external-dns/external-dns
   # Overrides the image tag whose default is v{{ .Chart.AppVersion }}
   tag: ""
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
+
 nameOverride: ""
 fullnameOverride: ""
+
+commonLabels: {}
 
 serviceAccount:
   # Specifies whether a service account should be created
   create: true
   # Annotations to add to the service account
   annotations: {}
+  # Labels to add to the service account
+  labels: {}
   # The name of the service account to use.
   # If not set and create is true, a name is generated using the fullname template
   name: ""
@@ -24,10 +29,17 @@ serviceAccount:
 rbac:
   # Specifies whether RBAC resources should be created
   create: true
+  additionalPermissions: []
+
+# Annotations to add to the Deployment
+deploymentAnnotations: {}
 
 podLabels: {}
 
+# Annotations to add to the Pod
 podAnnotations: {}
+
+shareProcessNamespace: false
 
 podSecurityContext:
   fsGroup: 65534
@@ -38,6 +50,10 @@ securityContext:
   readOnlyRootFilesystem: true
   capabilities:
     drop: ["ALL"]
+
+# Defaults to `ClusterFirst`.
+# Valid values are: `ClusterFirstWithHostNet`, `ClusterFirst`, `Default` or `None`.
+dnsPolicy:
 
 priorityClassName: ""
 
@@ -87,6 +103,8 @@ tolerations: []
 
 affinity: {}
 
+topologySpreadConstraints: []
+
 logLevel: info
 logFormat: text
 
@@ -102,9 +120,23 @@ policy: upsert-only
 registry: txt
 txtOwnerId: ""
 txtPrefix: ""
+txtSuffix: ""
 
 domainFilters: []
 
 provider: aws
 
 extraArgs: []
+
+secretConfiguration:
+  enabled: false
+  mountPath: ""
+  subPath: ""
+  data: {}
+    # credentials: |
+    #   [default]
+    #   aws_access_key_id = $SECRET_ACCESS_KEY
+    #   aws_secret_access_key = $SECRET_ACCESS_KEY
+
+deploymentStrategy:
+  type: Recreate

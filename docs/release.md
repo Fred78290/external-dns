@@ -24,11 +24,11 @@ You must be an official maintainer of the project to be able to do a release.
 
 ### Steps
 
-- Run `scripts/releaser.sh` to create a new GitHub release.
+- Run `scripts/releaser.sh` to create a new GitHub release. Alternatively you can create a release in the GitHub UI making sure to click on the autogenerate release node feature.
 - The step above will trigger the Kubernetes based CI/CD system [Prow](https://prow.k8s.io/?repo=kubernetes-sigs%2Fexternal-dns). Verify that a new image was built and uploaded to `gcr.io/k8s-staging-external-dns/external-dns`.
 - Create a PR in the [k8s.io repo](https://github.com/kubernetes/k8s.io) (see https://github.com/kubernetes/k8s.io/pull/540 for reference) by taking the current staging image using the sha256 digest. Once the PR is merged, the image will be live with the corresponding tag specified in the PR.
 - Verify that the image is pullable with the given tag (i.e. `v0.7.5`).
-- Branch out from the default branch and run `scripts/kustomize-version-udapter.sh` to update the image tag used in the kustomization.yaml.
+- Branch out from the default branch and run `scripts/kustomize-version-updater.sh` to update the image tag used in the kustomization.yaml.
 - Create an issue to release the corresponding Helm chart via the chart release process (below) assigned to a chart maintainer
 - Create a PR with the kustomize change.
 - Once the PR is merged, all is done :-)

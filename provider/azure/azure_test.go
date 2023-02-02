@@ -18,12 +18,10 @@ package azure
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/Azure/azure-sdk-for-go/services/dns/mgmt/2018-05-01/dns"
 	"github.com/Azure/go-autorest/autorest"
-	"github.com/Azure/go-autorest/autorest/azure"
 	"github.com/Azure/go-autorest/autorest/to"
 	"github.com/stretchr/testify/assert"
 
@@ -140,12 +138,15 @@ func othersRecordSetPropertiesGetter(values []string, ttl int64) *dns.RecordSetP
 		TTL: to.Int64Ptr(ttl),
 	}
 }
+
 func createMockRecordSet(name, recordType string, values ...string) dns.RecordSet {
 	return createMockRecordSetMultiWithTTL(name, recordType, 0, values...)
 }
+
 func createMockRecordSetWithTTL(name, recordType, value string, ttl int64) dns.RecordSet {
 	return createMockRecordSetMultiWithTTL(name, recordType, ttl, value)
 }
+
 func createMockRecordSetMultiWithTTL(name, recordType string, ttl int64, values ...string) dns.RecordSet {
 	var getterFunc func(values []string, ttl int64) *dns.RecordSetProperties
 
@@ -164,7 +165,6 @@ func createMockRecordSetMultiWithTTL(name, recordType string, ttl int64, values 
 		Type:                to.StringPtr("Microsoft.Network/dnszones/" + recordType),
 		RecordSetProperties: getterFunc(values, ttl),
 	}
-
 }
 
 func (client *mockRecordSetsClient) ListAllByDNSZoneComplete(ctx context.Context, resourceGroupName string, zoneName string, top *int32, recordSetNameSuffix string) (result dns.RecordSetListResultIterator, err error) {
@@ -217,7 +217,7 @@ func newMockedAzureProvider(domainFilter endpoint.DomainFilter, zoneNameFilter e
 		},
 	}
 
-	mockZoneListResultPage := dns.NewZoneListResultPage(pageIterator.getNextPage)
+	mockZoneListResultPage := dns.NewZoneListResultPage(dns.ZoneListResult{}, pageIterator.getNextPage)
 	mockZoneClientIterator := dns.NewZoneListResultIterator(mockZoneListResultPage)
 	zonesClient := mockZonesClient{
 		mockZonesClientIterator: &mockZoneClientIterator,
@@ -231,7 +231,8 @@ func newMockedAzureProvider(domainFilter endpoint.DomainFilter, zoneNameFilter e
 			},
 		},
 	}
-	mockRecordSetListResultPage := dns.NewRecordSetListResultPage(resultPageIterator.getNextPage)
+
+	mockRecordSetListResultPage := dns.NewRecordSetListResultPage(dns.RecordSetListResult{}, resultPageIterator.getNextPage)
 	mockRecordSetListIterator := dns.NewRecordSetListResultIterator(mockRecordSetListResultPage)
 	recordSetsClient := mockRecordSetsClient{
 		mockRecordSetListIterator: &mockRecordSetListIterator,
@@ -271,14 +272,12 @@ func TestAzureRecord(t *testing.T) {
 			createMockRecordSetWithTTL("nginx", endpoint.RecordTypeTXT, "heritage=external-dns,external-dns/owner=default", recordTTL),
 			createMockRecordSetWithTTL("hack", endpoint.RecordTypeCNAME, "hack.azurewebsites.net", 10),
 		})
-
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	ctx := context.Background()
 	actual, err := provider.Records(ctx)
-
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +290,6 @@ func TestAzureRecord(t *testing.T) {
 	}
 
 	validateAzureEndpoints(t, actual, expected)
-
 }
 
 func TestAzureMultiRecord(t *testing.T) {
@@ -308,14 +306,12 @@ func TestAzureMultiRecord(t *testing.T) {
 			createMockRecordSetWithTTL("nginx", endpoint.RecordTypeTXT, "heritage=external-dns,external-dns/owner=default", recordTTL),
 			createMockRecordSetWithTTL("hack", endpoint.RecordTypeCNAME, "hack.azurewebsites.net", 10),
 		})
-
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	ctx := context.Background()
 	actual, err := provider.Records(ctx)
-
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +324,6 @@ func TestAzureMultiRecord(t *testing.T) {
 	}
 
 	validateAzureEndpoints(t, actual, expected)
-
 }
 
 func TestAzureApplyChanges(t *testing.T) {
@@ -379,7 +374,7 @@ func testAzureApplyChangesInternal(t *testing.T, dryRun bool, client RecordSetsC
 		zlr,
 	}
 
-	mockZoneListResultPage := dns.NewZoneListResultPage(func(ctxParam context.Context, zlrParam dns.ZoneListResult) (dns.ZoneListResult, error) {
+	mockZoneListResultPage := dns.NewZoneListResultPage(dns.ZoneListResult{}, func(ctxParam context.Context, zlrParam dns.ZoneListResult) (dns.ZoneListResult, error) {
 		if len(results) > 0 {
 			result := results[0]
 			results = nil
@@ -446,59 +441,6 @@ func testAzureApplyChangesInternal(t *testing.T, dryRun bool, client RecordSetsC
 	}
 }
 
-func TestAzureGetAccessToken(t *testing.T) {
-	env := azure.PublicCloud
-	cfg := config{
-		ClientID:                    "",
-		ClientSecret:                "",
-		TenantID:                    "",
-		UseManagedIdentityExtension: false,
-	}
-
-	_, err := getAccessToken(cfg, env)
-	if err == nil {
-		t.Fatalf("expected to fail, but got no error")
-	}
-
-	// Expect to use managed identity in this case
-	cfg = config{
-		ClientID:                    "msi",
-		ClientSecret:                "msi",
-		TenantID:                    "cefe8aef-5127-4d65-a299-012053f81f60",
-		UserAssignedIdentityID:      "userAssignedIdentityClientID",
-		UseManagedIdentityExtension: true,
-	}
-	token, err := getAccessToken(cfg, env)
-	if err != nil {
-		t.Fatalf("expected to construct a token successfully, but got error %v", err)
-	}
-	_, err = token.MarshalJSON()
-	if err == nil ||
-		!strings.Contains(err.Error(), "marshalling ServicePrincipalMSISecret is not supported") {
-		t.Fatalf("expected to fail to marshal token, but got %v", err)
-	}
-
-	// Expect to use SPN in this case
-	cfg = config{
-		ClientID:                    "SPNClientID",
-		ClientSecret:                "SPNSecret",
-		TenantID:                    "cefe8aef-5127-4d65-a299-012053f81f60",
-		UserAssignedIdentityID:      "userAssignedIdentityClientID",
-		UseManagedIdentityExtension: true,
-	}
-	token, err = getAccessToken(cfg, env)
-	if err != nil {
-		t.Fatalf("expected to construct a token successfully, but got error %v", err)
-	}
-	innerToken, err := token.MarshalJSON()
-	if err != nil {
-		t.Fatalf("expected to marshal token successfully, but got error %v", err)
-	}
-	if !strings.Contains(string(innerToken), "SPNClientID") {
-		t.Fatalf("expect the clientID of the token is SPNClientID, but got token %s", string(innerToken))
-	}
-}
-
 func TestAzureNameFilter(t *testing.T) {
 	provider, err := newMockedAzureProvider(endpoint.NewDomainFilter([]string{"nginx.example.com"}), endpoint.NewDomainFilter([]string{"example.com"}), provider.NewZoneIDFilter([]string{""}), true, "k8s", "",
 		&[]dns.Zone{
@@ -515,14 +457,12 @@ func TestAzureNameFilter(t *testing.T) {
 			createMockRecordSetWithTTL("nginx", endpoint.RecordTypeTXT, "heritage=external-dns,external-dns/owner=default", recordTTL),
 			createMockRecordSetWithTTL("hack", endpoint.RecordTypeCNAME, "hack.azurewebsites.net", 10),
 		})
-
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	ctx := context.Background()
 	actual, err := provider.Records(ctx)
-
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -533,7 +473,6 @@ func TestAzureNameFilter(t *testing.T) {
 	}
 
 	validateAzureEndpoints(t, actual, expected)
-
 }
 
 func TestAzureApplyChangesZoneName(t *testing.T) {
@@ -567,7 +506,7 @@ func testAzureApplyChangesInternalZoneName(t *testing.T, dryRun bool, client Rec
 		zlr,
 	}
 
-	mockZoneListResultPage := dns.NewZoneListResultPage(func(ctxParam context.Context, zlrParam dns.ZoneListResult) (dns.ZoneListResult, error) {
+	mockZoneListResultPage := dns.NewZoneListResultPage(dns.ZoneListResult{}, func(ctxParam context.Context, zlrParam dns.ZoneListResult) (dns.ZoneListResult, error) {
 		if len(results) > 0 {
 			result := results[0]
 			results = nil

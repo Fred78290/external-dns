@@ -94,7 +94,7 @@ func (m *MockAlibabaCloudDNSAPI) UpdateDomainRecord(request *alidns.UpdateDomain
 }
 
 func (m *MockAlibabaCloudDNSAPI) DescribeDomains(request *alidns.DescribeDomainsRequest) (response *alidns.DescribeDomainsResponse, err error) {
-	var result alidns.Domains
+	var result alidns.DomainsInDescribeDomains
 	for _, record := range m.records {
 		domain := alidns.Domain{}
 		domain.DomainName = record.DomainName
@@ -209,7 +209,7 @@ func (m *MockAlibabaCloudPrivateZoneAPI) DescribeZoneInfo(request *pvtz.Describe
 	response = pvtz.CreateDescribeZoneInfoResponse()
 	response.ZoneId = m.zone.ZoneId
 	response.ZoneName = m.zone.ZoneName
-	response.BindVpcs = pvtz.BindVpcs{Vpc: m.zone.Vpcs.Vpc}
+	response.BindVpcs = pvtz.BindVpcsInDescribeZoneInfo{Vpc: m.zone.Vpcs.Vpc}
 	return response, nil
 }
 
@@ -435,7 +435,6 @@ func TestAlibabaCloudProvider_splitDNSName(t *testing.T) {
 }
 
 func TestAlibabaCloudProvider_TXTEndpoint(t *testing.T) {
-
 	p := newTestAlibabaCloudProvider(false)
 	const recordValue = "heritage=external-dns,external-dns/owner=default"
 	const endpointTarget = "\"heritage=external-dns,external-dns/owner=default\""
@@ -448,9 +447,8 @@ func TestAlibabaCloudProvider_TXTEndpoint(t *testing.T) {
 	}
 }
 
-//TestAlibabaCloudProvider_TXTEndpoint_PrivateZone
+// TestAlibabaCloudProvider_TXTEndpoint_PrivateZone
 func TestAlibabaCloudProvider_TXTEndpoint_PrivateZone(t *testing.T) {
-
 	p := newTestAlibabaCloudProvider(true)
 	const recordValue = "heritage=external-dns,external-dns/owner=default"
 	const endpointTarget = "\"heritage=external-dns,external-dns/owner=default\""

@@ -139,12 +139,15 @@ func privateOthersRecordSetPropertiesGetter(values []string, ttl int64) *private
 		TTL: to.Int64Ptr(ttl),
 	}
 }
+
 func createPrivateMockRecordSet(name, recordType string, values ...string) privatedns.RecordSet {
 	return createPrivateMockRecordSetMultiWithTTL(name, recordType, 0, values...)
 }
+
 func createPrivateMockRecordSetWithTTL(name, recordType, value string, ttl int64) privatedns.RecordSet {
 	return createPrivateMockRecordSetMultiWithTTL(name, recordType, ttl, value)
 }
+
 func createPrivateMockRecordSetMultiWithTTL(name, recordType string, ttl int64, values ...string) privatedns.RecordSet {
 	var getterFunc func(values []string, ttl int64) *privatedns.RecordSetProperties
 
@@ -163,7 +166,6 @@ func createPrivateMockRecordSetMultiWithTTL(name, recordType string, ttl int64, 
 		Type:                to.StringPtr("Microsoft.Network/privateDnsZones/" + recordType),
 		RecordSetProperties: getterFunc(values, ttl),
 	}
-
 }
 
 func (client *mockPrivateRecordSetsClient) ListComplete(ctx context.Context, resourceGroupName string, zoneName string, top *int32, recordSetNameSuffix string) (result privatedns.RecordSetListResultIterator, err error) {
@@ -216,7 +218,7 @@ func newMockedAzurePrivateDNSProvider(domainFilter endpoint.DomainFilter, zoneID
 		},
 	}
 
-	mockZoneListResultPage := privatedns.NewPrivateZoneListResultPage(pageIterator.getNextPage)
+	mockZoneListResultPage := privatedns.NewPrivateZoneListResultPage(privatedns.PrivateZoneListResult{}, pageIterator.getNextPage)
 	mockZoneClientIterator := privatedns.NewPrivateZoneListResultIterator(mockZoneListResultPage)
 	zonesClient := mockPrivateZonesClient{
 		mockZonesClientIterator: &mockZoneClientIterator,
@@ -230,7 +232,8 @@ func newMockedAzurePrivateDNSProvider(domainFilter endpoint.DomainFilter, zoneID
 			},
 		},
 	}
-	mockRecordSetListResultPage := privatedns.NewRecordSetListResultPage(resultPageIterator.getNextPage)
+
+	mockRecordSetListResultPage := privatedns.NewRecordSetListResultPage(privatedns.RecordSetListResult{}, resultPageIterator.getNextPage)
 	mockRecordSetListIterator := privatedns.NewRecordSetListResultIterator(mockRecordSetListResultPage)
 	recordSetsClient := mockPrivateRecordSetsClient{
 		mockRecordSetListIterator: &mockRecordSetListIterator,
@@ -264,13 +267,11 @@ func TestAzurePrivateDNSRecord(t *testing.T) {
 			createPrivateMockRecordSetWithTTL("nginx", endpoint.RecordTypeTXT, "heritage=external-dns,external-dns/owner=default", recordTTL),
 			createPrivateMockRecordSetWithTTL("hack", endpoint.RecordTypeCNAME, "hack.azurewebsites.net", 10),
 		})
-
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	actual, err := provider.Records(context.Background())
-
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +284,6 @@ func TestAzurePrivateDNSRecord(t *testing.T) {
 	}
 
 	validateAzureEndpoints(t, actual, expected)
-
 }
 
 func TestAzurePrivateDNSMultiRecord(t *testing.T) {
@@ -300,13 +300,11 @@ func TestAzurePrivateDNSMultiRecord(t *testing.T) {
 			createPrivateMockRecordSetWithTTL("nginx", endpoint.RecordTypeTXT, "heritage=external-dns,external-dns/owner=default", recordTTL),
 			createPrivateMockRecordSetWithTTL("hack", endpoint.RecordTypeCNAME, "hack.azurewebsites.net", 10),
 		})
-
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	actual, err := provider.Records(context.Background())
-
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,7 +317,6 @@ func TestAzurePrivateDNSMultiRecord(t *testing.T) {
 	}
 
 	validateAzureEndpoints(t, actual, expected)
-
 }
 
 func TestAzurePrivateDNSApplyChanges(t *testing.T) {
@@ -370,7 +367,7 @@ func testAzurePrivateDNSApplyChangesInternal(t *testing.T, dryRun bool, client P
 		zlr,
 	}
 
-	mockZoneListResultPage := privatedns.NewPrivateZoneListResultPage(func(ctxParam context.Context, zlrParam privatedns.PrivateZoneListResult) (privatedns.PrivateZoneListResult, error) {
+	mockZoneListResultPage := privatedns.NewPrivateZoneListResultPage(privatedns.PrivateZoneListResult{}, func(ctxParam context.Context, zlrParam privatedns.PrivateZoneListResult) (privatedns.PrivateZoneListResult, error) {
 		if len(results) > 0 {
 			result := results[0]
 			results = nil

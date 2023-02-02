@@ -29,7 +29,6 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/informers"
@@ -57,7 +56,7 @@ type kongTCPIngressSource struct {
 }
 
 // NewKongTCPIngressSource creates a new kongTCPIngressSource with the given config.
-func NewKongTCPIngressSource(dynamicKubeClient dynamic.Interface, kubeClient kubernetes.Interface, namespace string, annotationFilter string) (Source, error) {
+func NewKongTCPIngressSource(ctx context.Context, dynamicKubeClient dynamic.Interface, kubeClient kubernetes.Interface, namespace string, annotationFilter string) (Source, error) {
 	var err error
 
 	// Use shared informer to listen for add/update/delete of Host in the specified namespace.
@@ -73,8 +72,7 @@ func NewKongTCPIngressSource(dynamicKubeClient dynamic.Interface, kubeClient kub
 		},
 	)
 
-	// TODO informer is not explicitly stopped since controller is not passing in its channel.
-	informerFactory.Start(wait.NeverStop)
+	informerFactory.Start(ctx.Done())
 
 	// wait for the local cache to be populated.
 	if err := waitForDynamicCacheSync(context.Background(), informerFactory); err != nil {
@@ -257,11 +255,10 @@ func newKongUnstructuredConverter() (*unstructuredConverter, error) {
 	return uc, nil
 }
 
-//Kong types based on https://github.com/Kong/kubernetes-ingress-controller/blob/v1.2.0/pkg/apis/configuration/v1beta1/types.go to facilitate testing
-//When trying to import them from the Kong repo as a dependency it required upgrading the k8s.io/client-go and k8s.io/apimachinery which seemed
-//cause several changes in how the mock clients were working that resulted in a bunch of failures in other tests
-//If that is dealt with at some point the below can be removed and replaced with an actual import
-
+// Kong types based on https://github.com/Kong/kubernetes-ingress-controller/blob/v1.2.0/pkg/apis/configuration/v1beta1/types.go to facilitate testing
+// When trying to import them from the Kong repo as a dependency it required upgrading the k8s.io/client-go and k8s.io/apimachinery which seemed
+// cause several changes in how the mock clients were working that resulted in a bunch of failures in other tests
+// If that is dealt with at some point the below can be removed and replaced with an actual import
 type TCPIngress struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

@@ -18,7 +18,6 @@ package azure
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"strings"
 
@@ -43,7 +42,7 @@ type config struct {
 }
 
 func getConfig(configFile, resourceGroup, userAssignedIdentityClientID string) (*config, error) {
-	contents, err := ioutil.ReadFile(configFile)
+	contents, err := os.ReadFile(configFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read Azure config file '%s': %v", configFile, err)
 	}
@@ -104,17 +103,12 @@ func getAccessToken(cfg config, environment azure.Environment) (*adal.ServicePri
 	// Try to retrieve token with MSI.
 	if cfg.UseManagedIdentityExtension {
 		log.Info("Using managed identity extension to retrieve access token for Azure API.")
-		os.Setenv("MSI_ENDPOINT", "http://dummy")
-		defer func() {
-			os.Unsetenv("MSI_ENDPOINT")
-		}()
 
 		if cfg.UserAssignedIdentityID != "" {
 			log.Infof("Resolving to user assigned identity, client id is %s.", cfg.UserAssignedIdentityID)
 			token, err := adal.NewServicePrincipalTokenFromManagedIdentity(environment.ServiceManagementEndpoint, &adal.ManagedIdentityOptions{
 				ClientID: cfg.UserAssignedIdentityID,
 			})
-
 			if err != nil {
 				return nil, fmt.Errorf("failed to create the managed service identity token: %v", err)
 			}
