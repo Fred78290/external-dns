@@ -1,10 +1,10 @@
 # Quick Start
 
 - [Git](https://git-scm.com/downloads)
-- [Go 1.19+](https://golang.org/dl/)
+- [Go 1.21+](https://golang.org/dl/)
 - [Go modules](https://github.com/golang/go/wiki/Modules)
 - [golangci-lint](https://github.com/golangci/golangci-lint)
-- [Docker](https://docs.docker.com/install/)
+- [ko](https://ko.build/)
 - [kubectl](https://kubernetes.io/docs/tasks/tools/install-kubectl)
 
 Compile and run locally against a remote k8s cluster.
@@ -24,7 +24,7 @@ make cover-html
 
 Build container image.
 ```shell
-make build.docker
+make build.push IMAGE=your-registry/external-dns
 ```
 
 # Design

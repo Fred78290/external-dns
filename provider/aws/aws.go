@@ -25,12 +25,8 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
 	"github.com/aws/aws-sdk-go/aws/request"
-	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/route53"
-	"github.com/linki/instrumented_http"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 
 	"sigs.k8s.io/external-dns/endpoint"
@@ -47,10 +43,12 @@ const (
 	// As we are using the standard AWS client, this should already be compliant.
 	// Hence, ifever AWS decides to raise this limit, we will automatically reduce the pressure on rate limits
 	route53PageSize = "300"
-	// provider specific key that designates whether an AWS ALIAS record has the EvaluateTargetHealth
-	// field set to true.
-	providerSpecificAlias                      = "alias"
-	providerSpecificTargetHostedZone           = "aws/target-hosted-zone"
+	// providerSpecificAlias specifies whether a CNAME endpoint maps to an AWS ALIAS record.
+	providerSpecificAlias            = "alias"
+	providerSpecificTargetHostedZone = "aws/target-hosted-zone"
+	// providerSpecificEvaluateTargetHealth specifies whether an AWS ALIAS record
+	// has the EvaluateTargetHealth field set to true. Present iff the endpoint
+	// has a `providerSpecificAlias` value of `true`.
 	providerSpecificEvaluateTargetHealth       = "aws/evaluate-target-health"
 	providerSpecificWeight                     = "aws/weight"
 	providerSpecificRegion                     = "aws/region"
@@ -73,11 +71,13 @@ var canonicalHostedZones = map[string]string{
 	"ca-central-1.elb.amazonaws.com":      "ZQSVJUPU6J1EY",
 	"ap-east-1.elb.amazonaws.com":         "Z3DQVH9N71FHZ0",
 	"ap-south-1.elb.amazonaws.com":        "ZP97RAFLXTNZK",
+	"ap-south-2.elb.amazonaws.com":        "Z0173938T07WNTVAEPZN",
 	"ap-northeast-2.elb.amazonaws.com":    "ZWKZPGTI48KDX",
 	"ap-northeast-3.elb.amazonaws.com":    "Z5LXEXXYW11ES",
 	"ap-southeast-1.elb.amazonaws.com":    "Z1LMS91P8CMLE5",
 	"ap-southeast-2.elb.amazonaws.com":    "Z1GM3OXH4ZPM65",
 	"ap-southeast-3.elb.amazonaws.com":    "Z08888821HLRG5A9ZRTER",
+	"ap-southeast-4.elb.amazonaws.com":    "Z09517862IB2WZLPXG76F",
 	"ap-northeast-1.elb.amazonaws.com":    "Z14GRHDCWA56QT",
 	"eu-central-1.elb.amazonaws.com":      "Z215JYRZR1TBD5",
 	"eu-central-2.elb.amazonaws.com":      "Z06391101F2ZOEP8P5EB3",
@@ -86,6 +86,7 @@ var canonicalHostedZones = map[string]string{
 	"eu-west-3.elb.amazonaws.com":         "Z3Q77PNBQS71R4",
 	"eu-north-1.elb.amazonaws.com":        "Z23TAZ6LKFMNIO",
 	"eu-south-1.elb.amazonaws.com":        "Z3ULH7SSC9OV64",
+	"eu-south-2.elb.amazonaws.com":        "Z0956581394HF5D5LXGAP",
 	"sa-east-1.elb.amazonaws.com":         "Z2P70J7HTTTPLU",
 	"cn-north-1.elb.amazonaws.com.cn":     "Z1GDH35T77C1KE",
 	"cn-northwest-1.elb.amazonaws.com.cn": "ZM7IZAIOVVDZF",
@@ -94,6 +95,7 @@ var canonicalHostedZones = map[string]string{
 	"me-central-1.elb.amazonaws.com":      "Z08230872XQRWHG2XF6I",
 	"me-south-1.elb.amazonaws.com":        "ZS929ML54UICD",
 	"af-south-1.elb.amazonaws.com":        "Z268VQBMOI5EKX",
+	"il-central-1.elb.amazonaws.com":      "Z09170902867EHPV2DABU",
 	// Network Load Balancers
 	"elb.us-east-2.amazonaws.com":         "ZLMOA37VPKANP",
 	"elb.us-east-1.amazonaws.com":         "Z26RNL4JYFTOTI",
@@ -102,11 +104,13 @@ var canonicalHostedZones = map[string]string{
 	"elb.ca-central-1.amazonaws.com":      "Z2EPGBW3API2WT",
 	"elb.ap-east-1.amazonaws.com":         "Z12Y7K3UBGUAD1",
 	"elb.ap-south-1.amazonaws.com":        "ZVDDRBQ08TROA",
+	"elb.ap-south-2.amazonaws.com":        "Z0711778386UTO08407HT",
 	"elb.ap-northeast-3.amazonaws.com":    "Z1GWIQ4HH19I5X",
 	"elb.ap-northeast-2.amazonaws.com":    "ZIBE1TIR4HY56",
 	"elb.ap-southeast-1.amazonaws.com":    "ZKVM4W9LS7TM",
 	"elb.ap-southeast-2.amazonaws.com":    "ZCT6FZBF4DROD",
 	"elb.ap-southeast-3.amazonaws.com":    "Z01971771FYVNCOVWJU1G",
+	"elb.ap-southeast-4.amazonaws.com":    "Z01156963G8MIIL7X90IV",
 	"elb.ap-northeast-1.amazonaws.com":    "Z31USIVHYNEOWT",
 	"elb.eu-central-1.amazonaws.com":      "Z3F0SRJ5LGBH90",
 	"elb.eu-central-2.amazonaws.com":      "Z02239872DOALSIDCX66S",
@@ -115,6 +119,7 @@ var canonicalHostedZones = map[string]string{
 	"elb.eu-west-3.amazonaws.com":         "Z1CMS0P5QUZ6D5",
 	"elb.eu-north-1.amazonaws.com":        "Z1UDT6IFJ4EJM",
 	"elb.eu-south-1.amazonaws.com":        "Z23146JA1KNAFP",
+	"elb.eu-south-2.amazonaws.com":        "Z1011216NVTVYADP1SSV",
 	"elb.sa-east-1.amazonaws.com":         "ZTK26PT1VY4CU",
 	"elb.cn-north-1.amazonaws.com.cn":     "Z3QFB96KMJ7ED6",
 	"elb.cn-northwest-1.amazonaws.com.cn": "ZQEIKTCZ8352D",
@@ -123,10 +128,67 @@ var canonicalHostedZones = map[string]string{
 	"elb.me-central-1.amazonaws.com":      "Z00282643NTTLPANJJG2P",
 	"elb.me-south-1.amazonaws.com":        "Z3QSRYVP46NYYV",
 	"elb.af-south-1.amazonaws.com":        "Z203XCE67M25HM",
+	"elb.il-central-1.amazonaws.com":      "Z0313266YDI6ZRHTGQY4",
 	// Global Accelerator
 	"awsglobalaccelerator.com": "Z2BJ6XQ5FK7U4H",
-	// Cloudfront
+	// Cloudfront and AWS API Gateway edge-optimized endpoints
 	"cloudfront.net": "Z2FDTNDATAQYW2",
+	// VPC Endpoint (PrivateLink)
+	"eu-west-2.vpce.amazonaws.com":      "Z7K1066E3PUKB",
+	"us-east-2.vpce.amazonaws.com":      "ZC8PG0KIFKBRI",
+	"af-south-1.vpce.amazonaws.com":     "Z09302161J80N9A7UTP7U",
+	"ap-east-1.vpce.amazonaws.com":      "Z2LIHJ7PKBEMWN",
+	"ap-northeast-1.vpce.amazonaws.com": "Z2E726K9Y6RL4W",
+	"ap-northeast-2.vpce.amazonaws.com": "Z27UANNT0PRK1T",
+	"ap-northeast-3.vpce.amazonaws.com": "Z376B5OMM2JZL2",
+	"ap-south-1.vpce.amazonaws.com":     "Z2KVTB3ZLFM7JR",
+	"ap-south-2.vpce.amazonaws.com":     "Z0952991RWSF5AHIQDIY",
+	"ap-southeast-1.vpce.amazonaws.com": "Z18LLCSTV4NVNL",
+	"ap-southeast-2.vpce.amazonaws.com": "ZDK2GCRPAFKGO",
+	"ap-southeast-3.vpce.amazonaws.com": "Z03881013RZ9BYYZO8N5W",
+	"ap-southeast-4.vpce.amazonaws.com": "Z07508191CO1RNBX3X3AU",
+	"ca-central-1.vpce.amazonaws.com":   "ZRCXCF510Y6P9",
+	"eu-central-1.vpce.amazonaws.com":   "Z273ZU8SZ5RJPC",
+	"eu-central-2.vpce.amazonaws.com":   "Z045369019J4FUQ4S272E",
+	"eu-north-1.vpce.amazonaws.com":     "Z3OWWK6JFDEDGC",
+	"eu-south-1.vpce.amazonaws.com":     "Z2A5FDNRLY7KZG",
+	"eu-south-2.vpce.amazonaws.com":     "Z014396544HENR57XQCJ",
+	"eu-west-1.vpce.amazonaws.com":      "Z38GZ743OKFT7T",
+	"eu-west-3.vpce.amazonaws.com":      "Z1DWHTMFP0WECP",
+	"me-central-1.vpce.amazonaws.com":   "Z07122992YCEUCB9A9570",
+	"me-south-1.vpce.amazonaws.com":     "Z3B95P3VBGEQGY",
+	"sa-east-1.vpce.amazonaws.com":      "Z2LXUWEVLCVZIB",
+	"us-east-1.vpce.amazonaws.com":      "Z7HUB22UULQXV",
+	"us-gov-east-1.vpce.amazonaws.com":  "Z2MU5TEIGO9WXB",
+	"us-gov-west-1.vpce.amazonaws.com":  "Z12529ZODG2B6H",
+	"us-west-1.vpce.amazonaws.com":      "Z12I86A8N7VCZO",
+	"us-west-2.vpce.amazonaws.com":      "Z1YSA3EXCYUU9Z",
+	// AWS API Gateway (Regional endpoints)
+	// See: https://docs.aws.amazon.com/general/latest/gr/apigateway.html
+	"execute-api.us-east-2.amazonaws.com":      "ZOJJZC49E0EPZ",
+	"execute-api.us-east-1.amazonaws.com":      "Z1UJRXOUMOOFQ8",
+	"execute-api.us-west-1.amazonaws.com":      "Z2MUQ32089INYE",
+	"execute-api.us-west-2.amazonaws.com":      "Z2OJLYMUO9EFXC",
+	"execute-api.af-south-1.amazonaws.com":     "Z2DHW2332DAMTN",
+	"execute-api.ap-east-1.amazonaws.com":      "Z3FD1VL90ND7K5",
+	"execute-api.ap-south-1.amazonaws.com":     "Z3VO1THU9YC4UR",
+	"execute-api.ap-northeast-2.amazonaws.com": "Z20JF4UZKIW1U8",
+	"execute-api.ap-southeast-1.amazonaws.com": "ZL327KTPIQFUL",
+	"execute-api.ap-southeast-2.amazonaws.com": "Z2RPCDW04V8134",
+	"execute-api.ap-northeast-1.amazonaws.com": "Z1YSHQZHG15GKL",
+	"execute-api.ca-central-1.amazonaws.com":   "Z19DQILCV0OWEC",
+	"execute-api.eu-central-1.amazonaws.com":   "Z1U9ULNL0V5AJ3",
+	"execute-api.eu-west-1.amazonaws.com":      "ZLY8HYME6SFDD",
+	"execute-api.eu-west-2.amazonaws.com":      "ZJ5UAJN8Y3Z2Q",
+	"execute-api.eu-south-1.amazonaws.com":     "Z3BT4WSQ9TDYZV",
+	"execute-api.eu-west-3.amazonaws.com":      "Z3KY65QIEKYHQQ",
+	"execute-api.eu-south-2.amazonaws.com":     "Z02499852UI5HEQ5JVWX3",
+	"execute-api.eu-north-1.amazonaws.com":     "Z3UWIKFBOOGXPP",
+	"execute-api.me-south-1.amazonaws.com":     "Z20ZBPC0SS8806",
+	"execute-api.me-central-1.amazonaws.com":   "Z08780021BKYYY8U0YHTV",
+	"execute-api.sa-east-1.amazonaws.com":      "ZCMLWB8V5SYIT",
+	"execute-api.us-gov-east-1.amazonaws.com":  "Z3SE9ATJYCRCZJ",
+	"execute-api.us-gov-west-1.amazonaws.com":  "Z1K6XKP9SAGWDV",
 }
 
 // Route53API is the subset of the AWS Route53 API that we actually use.  Add methods as required. Signatures must match exactly.
@@ -192,49 +254,15 @@ type AWSConfig struct {
 	BatchChangeSize      int
 	BatchChangeInterval  time.Duration
 	EvaluateTargetHealth bool
-	AssumeRole           string
-	AssumeRoleExternalID string
-	APIRetries           int
 	PreferCNAME          bool
 	DryRun               bool
 	ZoneCacheDuration    time.Duration
 }
 
 // NewAWSProvider initializes a new AWS Route53 based Provider.
-func NewAWSProvider(awsConfig AWSConfig) (*AWSProvider, error) {
-	config := aws.NewConfig().WithMaxRetries(awsConfig.APIRetries)
-
-	config.WithHTTPClient(
-		instrumented_http.NewClient(config.HTTPClient, &instrumented_http.Callbacks{
-			PathProcessor: func(path string) string {
-				parts := strings.Split(path, "/")
-				return parts[len(parts)-1]
-			},
-		}),
-	)
-
-	session, err := session.NewSessionWithOptions(session.Options{
-		Config:            *config,
-		SharedConfigState: session.SharedConfigEnable,
-	})
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to instantiate AWS session")
-	}
-
-	if awsConfig.AssumeRole != "" {
-		if awsConfig.AssumeRoleExternalID != "" {
-			log.Infof("Assuming role: %s with external id %s", awsConfig.AssumeRole, awsConfig.AssumeRoleExternalID)
-			session.Config.WithCredentials(stscreds.NewCredentials(session, awsConfig.AssumeRole, func(p *stscreds.AssumeRoleProvider) {
-				p.ExternalID = &awsConfig.AssumeRoleExternalID
-			}))
-		} else {
-			log.Infof("Assuming role: %s", awsConfig.AssumeRole)
-			session.Config.WithCredentials(stscreds.NewCredentials(session, awsConfig.AssumeRole))
-		}
-	}
-
+func NewAWSProvider(awsConfig AWSConfig, client Route53API) (*AWSProvider, error) {
 	provider := &AWSProvider{
-		client:               route53.New(session),
+		client:               client,
 		domainFilter:         awsConfig.DomainFilter,
 		zoneIDFilter:         awsConfig.ZoneIDFilter,
 		zoneTypeFilter:       awsConfig.ZoneTypeFilter,
@@ -249,13 +277,6 @@ func NewAWSProvider(awsConfig AWSConfig) (*AWSProvider, error) {
 	}
 
 	return provider, nil
-}
-
-func (p *AWSProvider) PropertyValuesEqual(name string, previous string, current string) bool {
-	if name == "aws/evaluate-target-health" {
-		return true
-	}
-	return p.BaseProvider.PropertyValuesEqual(name, previous, current)
 }
 
 // Zones returns the list of hosted zones.
@@ -303,10 +324,10 @@ func (p *AWSProvider) Zones(ctx context.Context) (map[string]*route53.HostedZone
 
 	err := p.client.ListHostedZonesPagesWithContext(ctx, &route53.ListHostedZonesInput{}, f)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to list hosted zones")
+		return nil, provider.NewSoftError(fmt.Errorf("failed to list hosted zones: %w", err))
 	}
 	if tagErr != nil {
-		return nil, errors.Wrap(tagErr, "failed to list zones tags")
+		return nil, provider.NewSoftError(fmt.Errorf("failed to list zones tags: %w", tagErr))
 	}
 
 	for _, zone := range zones {
@@ -331,7 +352,7 @@ func wildcardUnescape(s string) string {
 func (p *AWSProvider) Records(ctx context.Context) (endpoints []*endpoint.Endpoint, _ error) {
 	zones, err := p.Zones(ctx)
 	if err != nil {
-		return nil, errors.Wrap(err, "records retrieval failed")
+		return nil, provider.NewSoftError(fmt.Errorf("records retrieval failed: %w", err))
 	}
 
 	return p.records(ctx, zones)
@@ -343,7 +364,7 @@ func (p *AWSProvider) records(ctx context.Context, zones map[string]*route53.Hos
 		for _, r := range resp.ResourceRecordSets {
 			newEndpoints := make([]*endpoint.Endpoint, 0)
 
-			if !provider.SupportedRecordType(aws.StringValue(r.Type)) {
+			if !p.SupportedRecordType(aws.StringValue(r.Type)) {
 				continue
 			}
 
@@ -358,7 +379,11 @@ func (p *AWSProvider) records(ctx context.Context, zones map[string]*route53.Hos
 					targets[idx] = aws.StringValue(rr.Value)
 				}
 
-				newEndpoints = append(newEndpoints, endpoint.NewEndpointWithTTL(wildcardUnescape(aws.StringValue(r.Name)), aws.StringValue(r.Type), ttl, targets...))
+				ep := endpoint.NewEndpointWithTTL(wildcardUnescape(aws.StringValue(r.Name)), aws.StringValue(r.Type), ttl, targets...)
+				if aws.StringValue(r.Type) == endpoint.RecordTypeCNAME {
+					ep = ep.WithProviderSpecific(providerSpecificAlias, "false")
+				}
+				newEndpoints = append(newEndpoints, ep)
 			}
 
 			if r.AliasTarget != nil {
@@ -367,7 +392,7 @@ func (p *AWSProvider) records(ctx context.Context, zones map[string]*route53.Hos
 					ttl = recordTTL
 				}
 				ep := endpoint.
-					NewEndpointWithTTL(wildcardUnescape(aws.StringValue(r.Name)), endpoint.RecordTypeCNAME, ttl, aws.StringValue(r.AliasTarget.DNSName)).
+					NewEndpointWithTTL(wildcardUnescape(aws.StringValue(r.Name)), endpoint.RecordTypeA, ttl, aws.StringValue(r.AliasTarget.DNSName)).
 					WithProviderSpecific(providerSpecificEvaluateTargetHealth, fmt.Sprintf("%t", aws.BoolValue(r.AliasTarget.EvaluateTargetHealth))).
 					WithProviderSpecific(providerSpecificAlias, "true")
 				newEndpoints = append(newEndpoints, ep)
@@ -419,42 +444,11 @@ func (p *AWSProvider) records(ctx context.Context, zones map[string]*route53.Hos
 		}
 
 		if err := p.client.ListResourceRecordSetsPagesWithContext(ctx, params, f); err != nil {
-			return nil, errors.Wrapf(err, "failed to list resource records sets for zone %s", *z.Id)
+			return nil, provider.NewSoftError(fmt.Errorf("failed to list resource records sets for zone %s: %w", *z.Id, err))
 		}
 	}
 
 	return endpoints, nil
-}
-
-// CreateRecords creates a given set of DNS records in the given hosted zone.
-func (p *AWSProvider) CreateRecords(ctx context.Context, endpoints []*endpoint.Endpoint) error {
-	return p.doRecords(ctx, route53.ChangeActionCreate, endpoints)
-}
-
-// DeleteRecords deletes a given set of DNS records in a given zone.
-func (p *AWSProvider) DeleteRecords(ctx context.Context, endpoints []*endpoint.Endpoint) error {
-	return p.doRecords(ctx, route53.ChangeActionDelete, endpoints)
-}
-
-func (p *AWSProvider) doRecords(ctx context.Context, action string, endpoints []*endpoint.Endpoint) error {
-	zones, err := p.Zones(ctx)
-	if err != nil {
-		return errors.Wrapf(err, "failed to list zones, aborting %s doRecords action", action)
-	}
-
-	p.AdjustEndpoints(endpoints)
-
-	return p.submitChanges(ctx, p.newChanges(action, endpoints), zones)
-}
-
-// UpdateRecords updates a given set of old records to a new set of records in a given hosted zone.
-func (p *AWSProvider) UpdateRecords(ctx context.Context, updates, current []*endpoint.Endpoint) error {
-	zones, err := p.Zones(ctx)
-	if err != nil {
-		return errors.Wrapf(err, "failed to list zones, aborting UpdateRecords")
-	}
-
-	return p.submitChanges(ctx, p.createUpdateChanges(updates, current), zones)
 }
 
 // Identify if old and new endpoints require DELETE/CREATE instead of UPDATE.
@@ -464,9 +458,13 @@ func (p *AWSProvider) requiresDeleteCreate(old *endpoint.Endpoint, new *endpoint
 		return true
 	}
 
-	// an ALIAS record change to/from a CNAME
-	if old.RecordType == endpoint.RecordTypeCNAME && useAlias(old, p.preferCNAME) != useAlias(new, p.preferCNAME) {
-		return true
+	// an ALIAS record change to/from an A
+	if old.RecordType == endpoint.RecordTypeA {
+		oldAlias, _ := old.GetProviderSpecificProperty(providerSpecificAlias)
+		newAlias, _ := new.GetProviderSpecificProperty(providerSpecificAlias)
+		if oldAlias != newAlias {
+			return true
+		}
 	}
 
 	// a set identifier change
@@ -513,11 +511,11 @@ func (p *AWSProvider) createUpdateChanges(newEndpoints, oldEndpoints []*endpoint
 }
 
 // GetDomainFilter generates a filter to exclude any domain that is not controlled by the provider
-func (p *AWSProvider) GetDomainFilter() endpoint.DomainFilterInterface {
+func (p *AWSProvider) GetDomainFilter() endpoint.DomainFilter {
 	zones, err := p.Zones(context.Background())
 	if err != nil {
 		log.Errorf("failed to list zones: %v", err)
-		return &endpoint.DomainFilter{}
+		return endpoint.DomainFilter{}
 	}
 	zoneNames := []string(nil)
 	for _, z := range zones {
@@ -531,7 +529,7 @@ func (p *AWSProvider) GetDomainFilter() endpoint.DomainFilterInterface {
 func (p *AWSProvider) ApplyChanges(ctx context.Context, changes *plan.Changes) error {
 	zones, err := p.Zones(ctx)
 	if err != nil {
-		return errors.Wrap(err, "failed to list zones, not applying changes")
+		return provider.NewSoftError(fmt.Errorf("failed to list zones, not applying changes: %w", err))
 	}
 
 	updateChanges := p.createUpdateChanges(changes.UpdateNew, changes.UpdateOld)
@@ -633,7 +631,7 @@ func (p *AWSProvider) submitChanges(ctx context.Context, changes Route53Changes,
 	}
 
 	if len(failedZones) > 0 {
-		return errors.Errorf("failed to submit all changes for the following zones: %v", failedZones)
+		return provider.NewSoftError(fmt.Errorf("failed to submit all changes for the following zones: %v", failedZones))
 	}
 
 	return nil
@@ -663,29 +661,49 @@ func (p *AWSProvider) newChanges(action string, endpoints []*endpoint.Endpoint) 
 // unneeded (potentially failing) changes.
 // Example: CNAME endpoints pointing to ELBs will have a `alias` provider-specific property
 // added to match the endpoints generated from existing alias records in Route53.
-func (p *AWSProvider) AdjustEndpoints(endpoints []*endpoint.Endpoint) []*endpoint.Endpoint {
+func (p *AWSProvider) AdjustEndpoints(endpoints []*endpoint.Endpoint) ([]*endpoint.Endpoint, error) {
 	for _, ep := range endpoints {
 		alias := false
+
 		if aliasString, ok := ep.GetProviderSpecificProperty(providerSpecificAlias); ok {
-			alias = aliasString.Value == "true"
-		} else if useAlias(ep, p.preferCNAME) {
-			alias = true
-			log.Debugf("Modifying endpoint: %v, setting %s=true", ep, providerSpecificAlias)
-			ep.ProviderSpecific = append(ep.ProviderSpecific, endpoint.ProviderSpecificProperty{
-				Name:  providerSpecificAlias,
-				Value: "true",
-			})
+			alias = aliasString == "true"
+			if alias {
+				if ep.RecordType != endpoint.RecordTypeA {
+					ep.DeleteProviderSpecificProperty(providerSpecificAlias)
+				}
+			} else {
+				if ep.RecordType == endpoint.RecordTypeCNAME {
+					if aliasString != "false" {
+						ep.SetProviderSpecificProperty(providerSpecificAlias, "false")
+					}
+				} else {
+					ep.DeleteProviderSpecificProperty(providerSpecificAlias)
+				}
+			}
+		} else if ep.RecordType == endpoint.RecordTypeCNAME {
+			alias = useAlias(ep, p.preferCNAME)
+			log.Debugf("Modifying endpoint: %v, setting %s=%v", ep, providerSpecificAlias, alias)
+			ep.SetProviderSpecificProperty(providerSpecificAlias, strconv.FormatBool(alias))
 		}
 
-		if _, ok := ep.GetProviderSpecificProperty(providerSpecificEvaluateTargetHealth); alias && !ok {
-			log.Debugf("Modifying endpoint: %v, setting %s=%t", ep, providerSpecificEvaluateTargetHealth, p.evaluateTargetHealth)
-			ep.ProviderSpecific = append(ep.ProviderSpecific, endpoint.ProviderSpecificProperty{
-				Name:  providerSpecificEvaluateTargetHealth,
-				Value: fmt.Sprintf("%t", p.evaluateTargetHealth),
-			})
+		if alias {
+			ep.RecordType = endpoint.RecordTypeA
+			if ep.RecordTTL.IsConfigured() {
+				log.Debugf("Modifying endpoint: %v, setting ttl=%v", ep, recordTTL)
+				ep.RecordTTL = recordTTL
+			}
+			if prop, ok := ep.GetProviderSpecificProperty(providerSpecificEvaluateTargetHealth); ok {
+				if prop != "true" && prop != "false" {
+					ep.SetProviderSpecificProperty(providerSpecificEvaluateTargetHealth, "false")
+				}
+			} else {
+				ep.SetProviderSpecificProperty(providerSpecificEvaluateTargetHealth, strconv.FormatBool(p.evaluateTargetHealth))
+			}
+		} else {
+			ep.DeleteProviderSpecificProperty(providerSpecificEvaluateTargetHealth)
 		}
 	}
-	return endpoints
+	return endpoints, nil
 }
 
 // newChange returns a route53 Change and a boolean indicating if there should also be a change to a AAAA record
@@ -705,7 +723,7 @@ func (p *AWSProvider) newChange(action string, ep *endpoint.Endpoint) (*Route53C
 	if targetHostedZone := isAWSAlias(ep); targetHostedZone != "" {
 		evalTargetHealth := p.evaluateTargetHealth
 		if prop, ok := ep.GetProviderSpecificProperty(providerSpecificEvaluateTargetHealth); ok {
-			evalTargetHealth = prop.Value == "true"
+			evalTargetHealth = prop == "true"
 		}
 		// If the endpoint has a Dualstack label, append a change for AAAA record as well.
 		if val, ok := ep.Labels[endpoint.DualstackLabelKey]; ok {
@@ -736,18 +754,18 @@ func (p *AWSProvider) newChange(action string, ep *endpoint.Endpoint) (*Route53C
 	if setIdentifier != "" {
 		change.ResourceRecordSet.SetIdentifier = aws.String(setIdentifier)
 		if prop, ok := ep.GetProviderSpecificProperty(providerSpecificWeight); ok {
-			weight, err := strconv.ParseInt(prop.Value, 10, 64)
+			weight, err := strconv.ParseInt(prop, 10, 64)
 			if err != nil {
-				log.Errorf("Failed parsing value of %s: %s: %v; using weight of 0", providerSpecificWeight, prop.Value, err)
+				log.Errorf("Failed parsing value of %s: %s: %v; using weight of 0", providerSpecificWeight, prop, err)
 				weight = 0
 			}
 			change.ResourceRecordSet.Weight = aws.Int64(weight)
 		}
 		if prop, ok := ep.GetProviderSpecificProperty(providerSpecificRegion); ok {
-			change.ResourceRecordSet.Region = aws.String(prop.Value)
+			change.ResourceRecordSet.Region = aws.String(prop)
 		}
 		if prop, ok := ep.GetProviderSpecificProperty(providerSpecificFailover); ok {
-			change.ResourceRecordSet.Failover = aws.String(prop.Value)
+			change.ResourceRecordSet.Failover = aws.String(prop)
 		}
 		if _, ok := ep.GetProviderSpecificProperty(providerSpecificMultiValueAnswer); ok {
 			change.ResourceRecordSet.MultiValueAnswer = aws.Bool(true)
@@ -756,15 +774,15 @@ func (p *AWSProvider) newChange(action string, ep *endpoint.Endpoint) (*Route53C
 		geolocation := &route53.GeoLocation{}
 		useGeolocation := false
 		if prop, ok := ep.GetProviderSpecificProperty(providerSpecificGeolocationContinentCode); ok {
-			geolocation.ContinentCode = aws.String(prop.Value)
+			geolocation.ContinentCode = aws.String(prop)
 			useGeolocation = true
 		} else {
 			if prop, ok := ep.GetProviderSpecificProperty(providerSpecificGeolocationCountryCode); ok {
-				geolocation.CountryCode = aws.String(prop.Value)
+				geolocation.CountryCode = aws.String(prop)
 				useGeolocation = true
 			}
 			if prop, ok := ep.GetProviderSpecificProperty(providerSpecificGeolocationSubdivisionCode); ok {
-				geolocation.SubdivisionCode = aws.String(prop.Value)
+				geolocation.SubdivisionCode = aws.String(prop)
 				useGeolocation = true
 			}
 		}
@@ -774,7 +792,7 @@ func (p *AWSProvider) newChange(action string, ep *endpoint.Endpoint) (*Route53C
 	}
 
 	if prop, ok := ep.GetProviderSpecificProperty(providerSpecificHealthCheckID); ok {
-		change.ResourceRecordSet.HealthCheckId = aws.String(prop.Value)
+		change.ResourceRecordSet.HealthCheckId = aws.String(prop)
 	}
 
 	if ownedRecord, ok := ep.Labels[endpoint.OwnedRecordLabelKey]; ok {
@@ -828,7 +846,7 @@ func (p *AWSProvider) tagsForZone(ctx context.Context, zoneID string) (map[strin
 		ResourceId:   aws.String(zoneID),
 	})
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to list tags for zone %s", zoneID)
+		return nil, provider.NewSoftError(fmt.Errorf("failed to list tags for zone %s: %w", zoneID, err))
 	}
 	tagMap := map[string]string{}
 	for _, tag := range response.ResourceTagSet.Tags {
@@ -988,13 +1006,13 @@ func useAlias(ep *endpoint.Endpoint, preferCNAME bool) bool {
 // isAWSAlias determines if a given endpoint is supposed to create an AWS Alias record
 // and (if so) returns the target hosted zone ID
 func isAWSAlias(ep *endpoint.Endpoint) string {
-	prop, exists := ep.GetProviderSpecificProperty(providerSpecificAlias)
-	if exists && prop.Value == "true" && ep.RecordType == endpoint.RecordTypeCNAME && len(ep.Targets) > 0 {
+	isAlias, exists := ep.GetProviderSpecificProperty(providerSpecificAlias)
+	if exists && isAlias == "true" && ep.RecordType == endpoint.RecordTypeA && len(ep.Targets) > 0 {
 		// alias records can only point to canonical hosted zones (e.g. to ELBs) or other records in the same zone
 
 		if hostedZoneID, ok := ep.GetProviderSpecificProperty(providerSpecificTargetHostedZone); ok {
 			// existing Endpoint where we got the target hosted zone from the Route53 data
-			return hostedZoneID.Value
+			return hostedZoneID
 		}
 
 		// check if the target is in a canonical hosted zone
@@ -1028,4 +1046,13 @@ func canonicalHostedZone(hostname string) string {
 // cleanZoneID removes the "/hostedzone/" prefix
 func cleanZoneID(id string) string {
 	return strings.TrimPrefix(id, "/hostedzone/")
+}
+
+func (p *AWSProvider) SupportedRecordType(recordType string) bool {
+	switch recordType {
+	case "MX":
+		return true
+	default:
+		return provider.SupportedRecordType(recordType)
+	}
 }
