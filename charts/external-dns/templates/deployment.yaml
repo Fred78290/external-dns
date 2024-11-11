@@ -17,7 +17,7 @@ spec:
       {{- include "external-dns.selectorLabels" . | nindent 6 }}
   strategy:
     {{- toYaml .Values.deploymentStrategy | nindent 4 }}
-  {{- if or (kindIs "float64" .Values.revisionHistoryLimit) (kindIs "int64" .Values.revisionHistoryLimit) }}
+  {{- if not (has (quote .Values.revisionHistoryLimit) (list "" (quote ""))) }}
   revisionHistoryLimit: {{ .Values.revisionHistoryLimit | int64 }}
   {{- end }}
   template:
@@ -40,7 +40,7 @@ spec:
     {{- if not (quote .Values.automountServiceAccountToken | empty) }}
       automountServiceAccountToken: {{ .Values.automountServiceAccountToken }}
     {{- end }}
-      {{- with .Values.imagePullSecrets }}
+      {{- with (default .Values.global.imagePullSecrets .Values.imagePullSecrets) }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -70,6 +70,9 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
+      {{- with .Values.extraContainers }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
         - name: external-dns
           {{- with .Values.securityContext }}
           securityContext:
@@ -144,7 +147,7 @@ spec:
         {{- with .Values.provider.webhook }}
         - name: webhook
           image: {{ include "external-dns.webhookImage" . }}
-          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          imagePullPolicy: {{ .image.pullPolicy }}
           {{- with .env }}
           env:
             {{- toYaml . | nindent 12 }}
@@ -156,9 +159,6 @@ spec:
           ports:
             - name: http-webhook
               protocol: TCP
-              containerPort: 8888
-            - name: http-wh-metrics
-              protocol: TCP
               containerPort: 8080
           livenessProbe:
             {{- toYaml .livenessProbe | nindent 12 }}
@@ -169,6 +169,10 @@ spec:
             {{- with .extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
+          {{- end }}
+          {{- with .resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
           {{- end }}
           {{- with .securityContext }}
           securityContext:

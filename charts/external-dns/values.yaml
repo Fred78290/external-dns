@@ -2,6 +2,10 @@
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
+global:
+  # -- Global image pull secrets.
+  imagePullSecrets: []
+
 image:
   # -- Image repository for the `external-dns` container.
   repository: registry.k8s.io/external-dns/external-dns
@@ -52,6 +56,9 @@ rbac:
 
 # -- Annotations to add to the `Deployment`.
 deploymentAnnotations: {}
+
+# -- Extra containers to add to the `Deployment`.
+extraContainers: {}
 
 # -- [Deployment Strategy](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#strategy).
 deploymentStrategy:
@@ -266,6 +273,9 @@ provider:
       timeoutSeconds: 5
       failureThreshold: 6
       successThreshold: 1
+    service:
+      # -- Webhook exposed HTTP port for the service.
+      port: 8080
     # -- Optional [Service Monitor](https://prometheus-operator.dev/docs/operator/design/#servicemonitor) configuration for the `webhook` container.
     # @default -- See _values.yaml_
     serviceMonitor:
